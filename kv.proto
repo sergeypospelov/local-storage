@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package NProto;
+
+message TPutRequest {
+  string key = 1;
+  uint64 offset = 2;
+}
+
+message TPutResponse {
+}
+
+message TGetRequest {
+  string key = 1;
+}
+
+message TGetResponse {
+  uint64 offset = 1;
+}
