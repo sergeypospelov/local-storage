@@ -1,3 +1,5 @@
+#include "kv.pb.h"
+
 #include <array>
 #include <cstring>
 #include <iostream>
@@ -126,10 +128,10 @@ auto accept_connection(int socketfd, struct epoll_event& event, int epollfd)
 
 ////////////////////////////////////////////////////////////////////////////////
 
-auto on_request(int fd)
+bool on_request(int fd)
 {
     char buf[512];
-    auto count = read(fd, buf, 512);
+    auto count = recv(fd, buf, 512, 0);
     if (count == -1) {
         if (errno == EAGAIN) {
             return false;
@@ -140,21 +142,31 @@ auto on_request(int fd)
         return false;
     }
 
-    std::cerr << "[I] " << fd << " says: " <<  buf;
+    NProto::TPutRequest put_request;
+    if (!put_request.ParseFromArray(buf, count)) {
+        // TODO proper handling
+
+        abort();
+    }
+
+    std::cerr << "[I] " << fd << " put_request: " << put_request.DebugString() << "\n";
 
     return true;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-auto send_response(int fd)
+bool send_response(int fd)
 {
     static int counter = 0;
-    ++counter;
 
-    std::stringstream ss;
-    ss << "ok " << counter << "\n";
-    auto count = send(fd, ss.str().c_str(), ss.str().size(), MSG_NOSIGNAL);
+    std::stringstream message;
+    message << "ok " << counter << "\n";
+    auto count = send(
+        fd,
+        message.str().c_str(),
+        message.str().size(),
+        MSG_NOSIGNAL);
 
     if (count == -1) {
         if (errno == EAGAIN) {
@@ -168,13 +180,15 @@ auto send_response(int fd)
         std::cerr << "[I] close " << fd << "\n";
         close(fd);
         return false;
+    } else if (count < message.str().size()) {
+        // TODO proper handling
+
+        abort();
     }
 
-    std::cerr << "[I] sent: " << count << std::endl;
-    // TODO check EWOULDBLOCK?
-    // TODO check count
+    ++counter;
 
-    return true;
+    return false;
 }
 
 }   // namespace
@@ -229,17 +243,33 @@ int main(int argc, const char** argv)
             {
                 std::cerr << "[E] epoll event error\n";
                 close(events[i].data.fd);
-            } else if (socketfd == events[i].data.fd) {
+
+                continue;
+            }
+
+            if (socketfd == events[i].data.fd) {
                 while (::accept_connection(socketfd, event, epollfd)) {
                 }
-            } else if (events[i].events & EPOLLIN) {
+
+                continue;
+            }
+
+            if (events[i].events & EPOLLIN) {
                 auto fd = events[i].data.fd;
                 while (::on_request(fd)) {
                 }
-            } else if (events[i].events & EPOLLOUT) {
+
+                // TODO register request in on_request
+                // requests should be identified by a (fd, request_id) pair
+            }
+
+            if (events[i].events & EPOLLOUT) {
                 auto fd = events[i].data.fd;
                 while (::send_response(fd)) {
                 }
+
+                // TODO respond to the registered requests and clear those
+                // requests
             }
         }
     }

@@ -3,17 +3,19 @@ syntax = "proto3";
 package NProto;
 
 message TPutRequest {
-  string key = 1;
-  uint64 offset = 2;
+    uint64 request_id = 1;
+    string key = 2;
+    uint64 offset = 3;
 }
 
 message TPutResponse {
 }
 
 message TGetRequest {
-  string key = 1;
+    uint64 request_id = 1;
+    string key = 2;
 }
 
 message TGetResponse {
-  uint64 offset = 1;
+    uint64 offset = 1;
 }

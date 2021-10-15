@@ -1,8 +1,10 @@
+#include "kv.pb.h"
+
 #include <array>
 #include <cstdlib>
-#include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 #include <errno.h>
@@ -26,36 +28,33 @@ constexpr int buf_size = 1024;
 
 ////////////////////////////////////////////////////////////////////////////////
 
-auto on_request(int fd)
+bool send_request(int fd, const std::string& data)
 {
-    char buf[512];
-    auto count = read(fd, buf, 512);
+    auto count = send(fd, data.c_str(), data.size(), 0);
     if (count == -1) {
         if (errno == EAGAIN) {
             return false;
         }
     } else if (count == 0) {
-        std::cerr << "[I] Close " << fd << "\n";
+        std::cerr << "[I] close " << fd << "\n";
         close(fd);
         return false;
     }
-
-    std::cerr << fd << " says: " <<  buf;
-
-    auto response_data = "ok\n";
-    count = write(fd, response_data, 3);
-    std::cerr << "written: " << count << std::endl;
-    // TODO check count
 
     return true;
 }
 
 }   // namespace
 
+////////////////////////////////////////////////////////////////////////////////
+
 int main(int argc, const char** argv) {
-    if (argc < 2) {
+    if (argc < 3) {
         return 1;
     }
+
+    const auto port = atoi(argv[1]);
+    const auto max_requests = atoi(argv[2]);
 
     int socketfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
     if (socketfd == -1) {
@@ -79,7 +78,7 @@ int main(int argc, const char** argv) {
     struct sockaddr_in dest;
     bzero(&dest, sizeof(dest));
     dest.sin_family = AF_INET;
-    dest.sin_port = htons(atoi(argv[1]));
+    dest.sin_port = htons(port);
 
     if (inet_pton(AF_INET, "127.0.0.1", &dest.sin_addr.s_addr) == 0) {
         perror("failed to convert address");
@@ -99,7 +98,7 @@ int main(int argc, const char** argv) {
     for (int i = 0; i < num_ready; i++) {
         if (events[i].events & EPOLLIN) {
             std::cerr << "[I] socket " << events[i].data.fd
-                << " connected" << std::endl;
+                << " connected\n";
 
             // TODO check that fd == socketfd
         }
@@ -107,14 +106,16 @@ int main(int argc, const char** argv) {
 
     char buffer[buf_size];
 
-    int received_count = 0;
+    uint64_t request_id = 0;
+    uint64_t offset = 0;
+    int inflight = 0;
 
-    while (received_count < 100) {
+    while (request_id < max_requests || inflight) {
         num_ready = epoll_wait(epollfd, events.data(), max_events, timeout);
         for (int i = 0; i < num_ready; i++) {
             if (events[i].events & EPOLLIN) {
                 std::cerr << "Socket " << events[i].data.fd
-                    << " got some data" << std::endl;
+                    << " got some data\n";
 
                 // TODO check that fd == socketfd
 
@@ -122,13 +123,49 @@ int main(int argc, const char** argv) {
                 recv(socketfd, buffer, buf_size, 0);
                 // TODO check recv return value
 
-                std::cerr << "[I] received: " << buffer << std::endl;
+                std::cerr << "[I] received: " << buffer << "\n";
 
-                ++received_count;
-            } else if (events[i].events & EPOLLOUT) {
-                std::string message = "request";
-                send(socketfd, message.c_str(), message.size(), 0);
-                // TODO check send return value
+                --inflight;
+            }
+
+            if ((events[i].events & EPOLLOUT) && request_id < max_requests) {
+                std::stringstream key;
+                key << "key" << request_id;
+
+                NProto::TPutRequest put_request;
+                put_request.set_request_id(request_id);
+                put_request.set_key(key.str());
+                put_request.set_offset(offset);
+
+                // TODO send message type
+
+                std::stringstream message;
+                put_request.SerializeToOstream(&message);
+
+                auto count = send(
+                    socketfd,
+                    message.str().c_str(),
+                    message.str().size(),
+                    0);
+
+                if (count == -1) {
+                    perror("[E] send failed");
+                    close(socketfd);
+                    return 1;
+                } else if (count == 0) {
+                    std::cerr << "[I] close " << socketfd << "\n";
+                    close(socketfd);
+                    return 1;
+                } else if (count < message.str().size()) {
+                    // TODO proper handling
+
+                    abort();
+                }
+
+                ++request_id;
+                offset += 4;    // +4 doesn't actually matter
+
+                ++inflight;
             }
         }
     }
