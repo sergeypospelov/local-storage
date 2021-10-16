@@ -9,6 +9,7 @@ message TPutRequest {
 }
 
 message TPutResponse {
+    uint64 request_id = 1;
 }
 
 message TGetRequest {
@@ -17,5 +18,6 @@ message TGetRequest {
 }
 
 message TGetResponse {
-    uint64 offset = 1;
+    uint64 request_id = 1;
+    uint64 offset = 2;
 }

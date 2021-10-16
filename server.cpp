@@ -1,11 +1,18 @@
 #include "kv.pb.h"
+#include "protocol.h"
 
 #include <array>
+#include <cstdio>
 #include <cstring>
+#include <deque>
+#include <functional>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 
+#include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <unistd.h>
@@ -14,7 +21,46 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
+static_assert(EAGAIN == EWOULDBLOCK);
+
+using namespace NProtocol;
+
 namespace {
+
+////////////////////////////////////////////////////////////////////////////////
+
+constexpr int verbosity = 3;
+
+void log(int level, const std::string& tag, const std::string& message)
+{
+    if (level <= verbosity) {
+        // TODO log current time
+        std::cerr << "[" << tag << "] " << message << "\n";
+    }
+}
+
+void log(int level, const std::string& tag, const std::stringstream& message)
+{
+    log(level, tag, message.str());
+}
+
+template <class T>
+void log_debug(const T& message)
+{
+    log(4, "D", message);
+}
+
+template <class T>
+void log_info(const T& message)
+{
+    log(3, "I", message);
+}
+
+template <class T>
+void log_error(const T& message)
+{
+    log(1, "E", message);
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -32,7 +78,7 @@ auto create_and_bind(std::string const& port)
     struct addrinfo* result;
     int sockt = getaddrinfo(nullptr, port.c_str(), &hints, &result);
     if (sockt != 0) {
-        std::cerr << "[E] getaddrinfo failed\n";
+        log_error("getaddrinfo failed");
         return -1;
     }
 
@@ -53,7 +99,7 @@ auto create_and_bind(std::string const& port)
     }
 
     if (rp == nullptr) {
-        std::cerr << "[E] bind failed\n";
+        log_error("bind failed");
         return -1;
     }
 
@@ -68,14 +114,14 @@ auto make_socket_nonblocking(int socketfd)
 {
     int flags = fcntl(socketfd, F_GETFL, 0);
     if (flags == -1) {
-        std::cerr << "[E] fcntl failed (F_GETFL)\n";
+        log_error("fcntl failed (F_GETFL)");
         return false;
     }
 
     flags |= O_NONBLOCK;
     int s = fcntl(socketfd, F_SETFL, flags);
     if (s == -1) {
-        std::cerr << "[E] fcntl failed (F_SETFL)\n";
+        log_error("fcntl failed (F_SETFL)");
         return false;
     }
 
@@ -84,17 +130,36 @@ auto make_socket_nonblocking(int socketfd)
 
 ////////////////////////////////////////////////////////////////////////////////
 
-auto accept_connection(int socketfd, struct epoll_event& event, int epollfd)
+struct SocketState
+{
+    int fd = 0;
+
+    Message current_message;
+
+    std::deque<std::string> response_queue;
+
+    uint32_t current_response_sent_count = 0;
+    std::string current_response;
+};
+
+using SocketStatePtr = std::shared_ptr<SocketState>;
+
+////////////////////////////////////////////////////////////////////////////////
+
+SocketStatePtr accept_connection(
+    int socketfd,
+    struct epoll_event& event,
+    int epollfd)
 {
     struct sockaddr in_addr;
     socklen_t in_len = sizeof(in_addr);
     int infd = accept(socketfd, &in_addr, &in_len);
     if (infd == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return false;
+            return nullptr;
         } else {
-            std::cerr << "[E] accept failed\n";
-            return false;
+            log_error("accept failed");
+            return nullptr;
         }
     }
 
@@ -107,88 +172,121 @@ auto accept_connection(int socketfd, struct epoll_event& event, int epollfd)
         NI_NUMERICHOST | NI_NUMERICSERV);
 
     if (ret == 0) {
-        std::cerr << "[I] Accepted connection on descriptor "
-            << infd << "(host=" << hbuf << ", port=" << sbuf << ")" << "\n";
+        std::stringstream log_message;
+        log_message << "accepted connection on fd " << infd
+            << "(host=" << hbuf << ", port=" << sbuf << ")";
+        log_info(log_message);
     }
 
     if (!make_socket_nonblocking(infd)) {
-        std::cerr << "[E] make_socket_nonblocking failed\n";
-        return false;
+        log_error("make_socket_nonblocking failed");
+        return nullptr;
     }
 
     event.data.fd = infd;
     event.events = EPOLLIN | EPOLLOUT | EPOLLET;
     if (epoll_ctl(epollfd, EPOLL_CTL_ADD, infd, &event) == -1) {
-        std::cerr << "[E] epoll_ctl failed\n";
-        return false;
+        log_error("epoll_ctl failed");
+        return nullptr;
     }
 
-    return true;
+    auto state = std::make_shared<SocketState>();
+    state->fd = infd;
+    return state;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-bool on_request(int fd)
+// request -> response func
+using Handler =
+    std::function<std::string(char request_type, const std::string& request)>;
+
+////////////////////////////////////////////////////////////////////////////////
+
+bool process_requests(SocketState& state, const Handler& handler)
 {
+    bool success = true;
+
     char buf[512];
-    auto count = recv(fd, buf, 512, 0);
-    if (count == -1) {
-        if (errno == EAGAIN) {
-            return false;
+    while (true) {
+        auto len = std::min(sizeof(buf), state.current_message.to_read());
+        auto count = recv(state.fd, buf, len, 0);
+
+        if (count == -1) {
+            if (errno != EAGAIN) {
+                // TODO proper logging
+                perror("send failed");
+
+                success = false;
+            }
+
+            break;
+        } else if (count == 0) {
+            break;
         }
-    } else if (count == 0) {
-        std::cerr << "[I] close " << fd << "\n";
-        close(fd);
-        return false;
+
+        state.current_message.on_data(buf, count);
+
+        if (count < len) {
+            break;
+        }
+
+        if (state.current_message.is_complete()) {
+            auto response = handler(
+                state.current_message.request_type,
+                state.current_message.buffer);
+
+            state.response_queue.push_back(std::move(response));
+
+            state.current_message.reset();
+        }
     }
 
-    NProto::TPutRequest put_request;
-    if (!put_request.ParseFromArray(buf, count)) {
-        // TODO proper handling
-
-        abort();
-    }
-
-    std::cerr << "[I] " << fd << " put_request: " << put_request.DebugString() << "\n";
-
-    return true;
+    return success;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-bool send_response(int fd)
+bool process_responses(SocketState& state)
 {
-    static int counter = 0;
+    bool success = true;
 
-    std::stringstream message;
-    message << "ok " << counter << "\n";
-    auto count = send(
-        fd,
-        message.str().c_str(),
-        message.str().size(),
-        MSG_NOSIGNAL);
+    while (true) {
+        auto& buffer = state.current_response;
+        auto& offset = state.current_response_sent_count;
+        auto len = buffer.size() - offset;
 
-    if (count == -1) {
-        if (errno == EAGAIN) {
-            return false;
-        } else {
-            perror("[E] send failed");
-            close(fd);
-            return false;
+        const auto count = send(
+            state.fd,
+            buffer.data() + offset,
+            len,
+            MSG_NOSIGNAL);
+
+        if (count == -1) {
+            if (errno != EAGAIN) {
+                // TODO proper logging
+                perror("send failed");
+
+                success = false;
+            }
+
+            break;
+        } else if (count == 0) {
+            break;
         }
-    } else if (count == 0) {
-        std::cerr << "[I] close " << fd << "\n";
-        close(fd);
-        return false;
-    } else if (count < message.str().size()) {
-        // TODO proper handling
 
-        abort();
+        if (count == len) {
+            if (state.response_queue.empty()) {
+                break;
+            }
+
+            buffer = state.response_queue.front();
+            offset = 0;
+            state.response_queue.pop_front();
+        }
     }
 
-    ++counter;
-
-    return false;
+    return success;
 }
 
 }   // namespace
@@ -201,6 +299,11 @@ int main(int argc, const char** argv)
         return 1;
     }
 
+    /*
+     * socket creation and epoll boilerplate
+     * TODO extract into struct Bootstrap
+     */
+
     auto socketfd = ::create_and_bind(argv[1]);
     if (socketfd == -1) {
         return 1;
@@ -211,13 +314,13 @@ int main(int argc, const char** argv)
     }
 
     if (listen(socketfd, SOMAXCONN) == -1) {
-        std::cerr << "[E] listen failed\n";
+        log_error("listen failed");
         return 1;
     }
 
     int epollfd = epoll_create1(0);
     if (epollfd == -1) {
-        std::cerr << "[E] epoll_create1 failed\n";
+        log_error("epoll_create1 failed");
         return 1;
     }
 
@@ -225,56 +328,143 @@ int main(int argc, const char** argv)
     event.data.fd = socketfd;
     event.events = EPOLLIN | EPOLLET;
     if (epoll_ctl(epollfd, EPOLL_CTL_ADD, socketfd, &event) == -1) {
-        std::cerr << "[E] epoll_ctl failed\n";
+        log_error("epoll_ctl failed");
         return 1;
     }
 
+    /*
+     * handler function
+     */
+
+    auto handle_get = [&] (const std::string& request) {
+        NProto::TGetRequest get_request;
+        if (!get_request.ParseFromArray(request.data(), request.size())) {
+            // TODO proper handling
+
+            abort();
+        }
+
+        // TODO proper handling
+        std::stringstream log_message;
+        log_message << "get_request: " << get_request.DebugString();
+        log_info(log_message);
+
+        NProto::TGetResponse get_response;
+        get_response.set_request_id(get_request.request_id());
+        get_response.set_offset(111);
+
+        std::stringstream response;
+        get_response.SerializeToOstream(&response);
+
+        return response.str();
+    };
+
+    auto handle_put = [&] (const std::string& request) {
+        NProto::TPutRequest put_request;
+        if (!put_request.ParseFromArray(request.data(), request.size())) {
+            // TODO proper handling
+
+            abort();
+        }
+
+        // TODO proper handling
+        std::stringstream log_message;
+        log_message << "put_request: " << put_request.DebugString();
+        log_info(log_message);
+
+        NProto::TPutResponse put_response;
+        put_response.set_request_id(put_request.request_id());
+
+        std::stringstream response;
+        put_response.SerializeToOstream(&response);
+
+        return response.str();
+    };
+
+    Handler handler = [&] (char request_type, const std::string& request) {
+        switch (request_type) {
+            case PUT_REQUEST: return handle_put(request);
+            case GET_REQUEST: return handle_get(request);
+        }
+
+        // TODO proper handling
+
+        abort();
+        return std::string();
+    };
+
+    /*
+     * rpc state and event loop
+     * TODO extract into struct Rpc
+     */
+
     std::array<struct epoll_event, ::max_events> events;
+    std::unordered_map<int, SocketStatePtr> states;
+
+    auto finalize = [&] (int fd) {
+        std::stringstream log_message;
+        log_message << "close " << fd;
+        log_info(log_message);
+
+        close(fd);
+        states.erase(fd);
+    };
 
     while (true) {
-        auto n = epoll_wait(epollfd, events.data(), ::max_events, -1);
+        const auto n = epoll_wait(epollfd, events.data(), ::max_events, -1);
 
-        std::cerr << "[I] got " << n << " events\n";
+        {
+            std::stringstream log_message;
+            log_message << "got " << n << " events";
+            log_info(log_message);
+        }
 
         for (int i = 0; i < n; ++i) {
+            const auto fd = events[i].data.fd;
+
             if (events[i].events & EPOLLERR
                     || events[i].events & EPOLLHUP
                     || !(events[i].events & (EPOLLIN | EPOLLOUT)))
             {
-                std::cerr << "[E] epoll event error\n";
-                close(events[i].data.fd);
+                std::stringstream log_message;
+                log_message << "epoll event error on fd " << fd;
+                log_error(log_message);
+
+                finalize(fd);
 
                 continue;
             }
 
-            if (socketfd == events[i].data.fd) {
-                while (::accept_connection(socketfd, event, epollfd)) {
+            if (socketfd == fd) {
+                while (true) {
+                    auto state = ::accept_connection(socketfd, event, epollfd);
+                    if (!state) {
+                        break;
+                    }
+
+                    states[state->fd] = state;
                 }
 
                 continue;
             }
 
             if (events[i].events & EPOLLIN) {
-                auto fd = events[i].data.fd;
-                while (::on_request(fd)) {
+                auto state = states.at(fd);
+                if (!process_requests(*state, handler)) {
+                    finalize(fd);
                 }
-
-                // TODO register request in on_request
-                // requests should be identified by a (fd, request_id) pair
             }
 
             if (events[i].events & EPOLLOUT) {
-                auto fd = events[i].data.fd;
-                while (::send_response(fd)) {
+                auto state = states.at(fd);
+                if (!process_responses(*state)) {
+                    finalize(fd);
                 }
-
-                // TODO respond to the registered requests and clear those
-                // requests
             }
         }
     }
 
-    std::cerr << "[I] exiting\n";
+    log_info("exiting");
 
     close(socketfd);
 

@@ -15,8 +15,9 @@
 #include <sys/epoll.h>
 #include <sys/socket.h>
 
-#define MAXBUF 1024
-#define MAX_EPOLL_EVENTS 64
+// TODO use protocol.h, currently this code is not compatible with server code
+
+static_assert(EAGAIN == EWOULDBLOCK);
 
 namespace {
 

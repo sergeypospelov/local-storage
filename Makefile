@@ -6,20 +6,22 @@ INC=-I $(PROTOBUF)
 
 all: server client
 
-server: server.o protocol
-	$(CC) -o server server.o kv.pb.o $(LIB)
+server: server.o protocol kv
+	$(CC) -o server server.o protocol.o kv.pb.o $(LIB)
 
-server.o: server.cpp protocol
+server.o: server.cpp protocol kv
 	$(CC) -c server.cpp $(INC)
 
-client: client.o protocol
-	$(CC) -o client client.o kv.pb.o $(LIB)
+client: client.o protocol kv
+	$(CC) -o client client.o protocol.o kv.pb.o $(LIB)
 
-client.o: client.cpp protocol
+client.o: client.cpp protocol kv
 	$(CC) -c client.cpp $(INC)
 
 kv: kv.proto
 	$(PROTOC) --cpp_out=. kv.proto
 	$(CC) -c kv.pb.cc $(INC)
 
-protocol: kv
+#protocol: protocol.h protocol.cpp kv
+protocol: protocol.h protocol.cpp
+	$(CC) -c protocol.cpp $(INC)
