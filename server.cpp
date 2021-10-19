@@ -1,13 +1,11 @@
 #include "kv.pb.h"
+#include "log.h"
 #include "protocol.h"
+#include "rpc.h"
 
 #include <array>
 #include <cstdio>
 #include <cstring>
-#include <deque>
-#include <functional>
-#include <iostream>
-#include <memory>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -23,48 +21,17 @@
 
 static_assert(EAGAIN == EWOULDBLOCK);
 
+using namespace NLogging;
 using namespace NProtocol;
+using namespace NRpc;
 
 namespace {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-constexpr int verbosity = 3;
-
-void log(int level, const std::string& tag, const std::string& message)
-{
-    if (level <= verbosity) {
-        // TODO log current time
-        std::cerr << "[" << tag << "] " << message << "\n";
-    }
-}
-
-void log(int level, const std::string& tag, const std::stringstream& message)
-{
-    log(level, tag, message.str());
-}
-
-template <class T>
-void log_debug(const T& message)
-{
-    log(4, "D", message);
-}
-
-template <class T>
-void log_info(const T& message)
-{
-    log(3, "I", message);
-}
-
-template <class T>
-void log_error(const T& message)
-{
-    log(1, "E", message);
-}
+constexpr int max_events = 32;
 
 ////////////////////////////////////////////////////////////////////////////////
-
-constexpr int max_events = 32;
 
 auto create_and_bind(std::string const& port)
 {
@@ -130,22 +97,6 @@ auto make_socket_nonblocking(int socketfd)
 
 ////////////////////////////////////////////////////////////////////////////////
 
-struct SocketState
-{
-    int fd = 0;
-
-    Message current_message;
-
-    std::deque<std::string> response_queue;
-
-    uint32_t current_response_sent_count = 0;
-    std::string current_response;
-};
-
-using SocketStatePtr = std::shared_ptr<SocketState>;
-
-////////////////////////////////////////////////////////////////////////////////
-
 SocketStatePtr accept_connection(
     int socketfd,
     struct epoll_event& event,
@@ -195,100 +146,6 @@ SocketStatePtr accept_connection(
     return state;
 }
 
-////////////////////////////////////////////////////////////////////////////////
-
-// request -> response func
-using Handler =
-    std::function<std::string(char request_type, const std::string& request)>;
-
-////////////////////////////////////////////////////////////////////////////////
-
-bool process_requests(SocketState& state, const Handler& handler)
-{
-    bool success = true;
-
-    char buf[512];
-    while (true) {
-        auto len = std::min(sizeof(buf), state.current_message.to_read());
-        auto count = recv(state.fd, buf, len, 0);
-
-        if (count == -1) {
-            if (errno != EAGAIN) {
-                // TODO proper logging
-                perror("send failed");
-
-                success = false;
-            }
-
-            break;
-        } else if (count == 0) {
-            break;
-        }
-
-        state.current_message.on_data(buf, count);
-
-        if (count < len) {
-            break;
-        }
-
-        if (state.current_message.is_complete()) {
-            auto response = handler(
-                state.current_message.request_type,
-                state.current_message.buffer);
-
-            state.response_queue.push_back(std::move(response));
-
-            state.current_message.reset();
-        }
-    }
-
-    return success;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-bool process_responses(SocketState& state)
-{
-    bool success = true;
-
-    while (true) {
-        auto& buffer = state.current_response;
-        auto& offset = state.current_response_sent_count;
-        auto len = buffer.size() - offset;
-
-        const auto count = send(
-            state.fd,
-            buffer.data() + offset,
-            len,
-            MSG_NOSIGNAL);
-
-        if (count == -1) {
-            if (errno != EAGAIN) {
-                // TODO proper logging
-                perror("send failed");
-
-                success = false;
-            }
-
-            break;
-        } else if (count == 0) {
-            break;
-        }
-
-        if (count == len) {
-            if (state.response_queue.empty()) {
-                break;
-            }
-
-            buffer = state.response_queue.front();
-            offset = 0;
-            state.response_queue.pop_front();
-        }
-    }
-
-    return success;
-}
-
 }   // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -336,6 +193,9 @@ int main(int argc, const char** argv)
      * handler function
      */
 
+    // TODO on-disk storage
+    std::unordered_map<std::string, uint64_t> storage;
+
     auto handle_get = [&] (const std::string& request) {
         NProto::TGetRequest get_request;
         if (!get_request.ParseFromArray(request.data(), request.size())) {
@@ -344,16 +204,21 @@ int main(int argc, const char** argv)
             abort();
         }
 
-        // TODO proper handling
+        /*
         std::stringstream log_message;
         log_message << "get_request: " << get_request.DebugString();
         log_info(log_message);
+        */
 
         NProto::TGetResponse get_response;
         get_response.set_request_id(get_request.request_id());
-        get_response.set_offset(111);
+        auto it = storage.find(get_request.key());
+        if (it != storage.end()) {
+            get_response.set_offset(it->second);
+        }
 
         std::stringstream response;
+        serialize_header(GET_RESPONSE, get_response.ByteSizeLong(), response);
         get_response.SerializeToOstream(&response);
 
         return response.str();
@@ -367,15 +232,18 @@ int main(int argc, const char** argv)
             abort();
         }
 
-        // TODO proper handling
+        /*
         std::stringstream log_message;
         log_message << "put_request: " << put_request.DebugString();
         log_info(log_message);
+        */
+        storage[put_request.key()] = put_request.offset();
 
         NProto::TPutResponse put_response;
         put_response.set_request_id(put_request.request_id());
 
         std::stringstream response;
+        serialize_header(PUT_RESPONSE, put_response.ByteSizeLong(), response);
         put_response.SerializeToOstream(&response);
 
         return response.str();
@@ -450,14 +318,14 @@ int main(int argc, const char** argv)
 
             if (events[i].events & EPOLLIN) {
                 auto state = states.at(fd);
-                if (!process_requests(*state, handler)) {
+                if (!process_input(*state, handler)) {
                     finalize(fd);
                 }
             }
 
             if (events[i].events & EPOLLOUT) {
                 auto state = states.at(fd);
-                if (!process_responses(*state)) {
+                if (!process_output(*state)) {
                     finalize(fd);
                 }
             }

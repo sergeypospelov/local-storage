@@ -1,4 +1,7 @@
 #include "kv.pb.h"
+#include "log.h"
+#include "protocol.h"
+#include "rpc.h"
 
 #include <array>
 #include <cstdlib>
@@ -15,9 +18,11 @@
 #include <sys/epoll.h>
 #include <sys/socket.h>
 
-// TODO use protocol.h, currently this code is not compatible with server code
-
 static_assert(EAGAIN == EWOULDBLOCK);
+
+using namespace NLogging;
+using namespace NProtocol;
+using namespace NRpc;
 
 namespace {
 
@@ -25,25 +30,6 @@ namespace {
 
 constexpr int max_events = 32;
 constexpr int timeout = 1000;
-constexpr int buf_size = 1024;
-
-////////////////////////////////////////////////////////////////////////////////
-
-bool send_request(int fd, const std::string& data)
-{
-    auto count = send(fd, data.c_str(), data.size(), 0);
-    if (count == -1) {
-        if (errno == EAGAIN) {
-            return false;
-        }
-    } else if (count == 0) {
-        std::cerr << "[I] close " << fd << "\n";
-        close(fd);
-        return false;
-    }
-
-    return true;
-}
 
 }   // namespace
 
@@ -64,7 +50,7 @@ int main(int argc, const char** argv) {
 
     int epollfd = epoll_create1(0);
     if (epollfd == -1) {
-        std::cerr << "[E] epoll_create1 failed\n";
+        log_error("epoll_create1 failed");
         return 1;
     }
 
@@ -72,7 +58,7 @@ int main(int argc, const char** argv) {
     event.events = EPOLLIN | EPOLLOUT | EPOLLET;
     event.data.fd = socketfd;
     if (epoll_ctl(epollfd, EPOLL_CTL_ADD, socketfd, &event) == -1) {
-        std::cerr << "[E] epoll_ctl failed\n";
+        log_error("epoll_ctl failed");
         return 1;
     }
 
@@ -93,80 +79,140 @@ int main(int argc, const char** argv) {
         }
     }
 
+    SocketState state;
+    state.fd = socketfd;
+
+    /*
+     * generating requests
+     */
+
+    for (int i = 0; i < max_requests; ++i) {
+        std::stringstream key;
+        key << "key" << i;
+
+        NProto::TPutRequest put_request;
+        put_request.set_request_id(i);
+        put_request.set_key(key.str());
+        put_request.set_offset(i * 4);
+
+        std::stringstream message;
+        serialize_header(PUT_REQUEST, put_request.ByteSizeLong(), message);
+        put_request.SerializeToOstream(&message);
+
+        state.output_queue.push_back(message.str());
+
+        // std::cerr << "generated put request " << put_request.DebugString() << std::endl;
+    }
+
+    for (int i = 0; i < max_requests; ++i) {
+        std::stringstream key;
+        key << "key" << i;
+
+        NProto::TGetRequest get_request;
+        get_request.set_request_id(max_requests + i);
+        get_request.set_key(key.str());
+
+        std::stringstream message;
+        serialize_header(GET_REQUEST, get_request.ByteSizeLong(), message);
+        get_request.SerializeToOstream(&message);
+
+        state.output_queue.push_back(message.str());
+
+        // std::cerr << "generated get request " << get_request.DebugString() << std::endl;
+    }
+
+    /*
+     * handler function
+     */
+
+    int response_count = 0;
+
+    auto handle_get = [&] (const std::string& response) {
+        NProto::TGetResponse get_response;
+        if (!get_response.ParseFromArray(response.data(), response.size())) {
+            // TODO proper handling
+
+            abort();
+        }
+
+        std::stringstream log_message;
+        log_message << "get_response: " << get_response.DebugString();
+        log_info(log_message);
+
+        ++response_count;
+
+        return std::string();
+    };
+
+    auto handle_put = [&] (const std::string& response) {
+        NProto::TPutResponse put_response;
+        if (!put_response.ParseFromArray(response.data(), response.size())) {
+            // TODO proper handling
+
+            abort();
+        }
+
+        // TODO proper handling
+        std::stringstream log_message;
+        log_message << "put_response: " << put_response.DebugString();
+        log_info(log_message);
+
+        ++response_count;
+
+        return std::string();
+    };
+
+    Handler handler = [&] (char message_type, const std::string& response) {
+        switch (message_type) {
+            case PUT_RESPONSE: return handle_put(response);
+            case GET_RESPONSE: return handle_get(response);
+        }
+
+        // TODO proper handling
+
+        abort();
+        return std::string();
+    };
+
+    /*
+     * rpc state and event loop
+     */
+
     std::array<struct epoll_event, ::max_events> events;
 
     int num_ready = epoll_wait(epollfd, events.data(), max_events, timeout);
     for (int i = 0; i < num_ready; i++) {
         if (events[i].events & EPOLLIN) {
-            std::cerr << "[I] socket " << events[i].data.fd
-                << " connected\n";
+            verify(events[i].data.fd == socketfd, "fd mismatch");
 
-            // TODO check that fd == socketfd
+            std::stringstream log_message;
+            log_message << "socket " << socketfd << " connected";
+            log_info(log_message);
         }
     }
 
-    char buffer[buf_size];
+    if (!process_output(state)) {
+        log_error("failed to send request");
+        return 3;
+    }
 
-    uint64_t request_id = 0;
-    uint64_t offset = 0;
-    int inflight = 0;
-
-    while (request_id < max_requests || inflight) {
+    while (response_count < 2 * max_requests) {
         num_ready = epoll_wait(epollfd, events.data(), max_events, timeout);
         for (int i = 0; i < num_ready; i++) {
+            verify(events[i].data.fd == socketfd, "fd mismatch");
+
             if (events[i].events & EPOLLIN) {
-                std::cerr << "Socket " << events[i].data.fd
-                    << " got some data\n";
-
-                // TODO check that fd == socketfd
-
-                bzero(buffer, buf_size);
-                recv(socketfd, buffer, buf_size, 0);
-                // TODO check recv return value
-
-                std::cerr << "[I] received: " << buffer << "\n";
-
-                --inflight;
+                if (!process_input(state, handler)) {
+                    log_error("failed to read response");
+                    return 2;
+                }
             }
 
-            if ((events[i].events & EPOLLOUT) && request_id < max_requests) {
-                std::stringstream key;
-                key << "key" << request_id;
-
-                NProto::TPutRequest put_request;
-                put_request.set_request_id(request_id);
-                put_request.set_key(key.str());
-                put_request.set_offset(offset);
-
-                // TODO send message type
-
-                std::stringstream message;
-                put_request.SerializeToOstream(&message);
-
-                auto count = send(
-                    socketfd,
-                    message.str().c_str(),
-                    message.str().size(),
-                    0);
-
-                if (count == -1) {
-                    perror("[E] send failed");
-                    close(socketfd);
-                    return 1;
-                } else if (count == 0) {
-                    std::cerr << "[I] close " << socketfd << "\n";
-                    close(socketfd);
-                    return 1;
-                } else if (count < message.str().size()) {
-                    // TODO proper handling
-
-                    abort();
+            if ((events[i].events & EPOLLOUT)) {
+                if (!process_output(state)) {
+                    log_error("failed to send request");
+                    return 3;
                 }
-
-                ++request_id;
-                offset += 4;    // +4 doesn't actually matter
-
-                ++inflight;
             }
         }
     }

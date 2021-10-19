@@ -1,27 +1,42 @@
-PROTOBUF=./protobuf-3.18.1/src
-CC=g++ -g -O3 -DNDEBUG
+#CC=g++ -g -O3 -DNDEBUG
+CC=g++ -g
 PROTOC=$(PROTOBUF)/protoc
+
+PROTOBUF=./protobuf-3.18.1/src
 LIB=$(PROTOBUF)/.libs/libprotobuf.a -ldl -pthread
 INC=-I $(PROTOBUF)
 
-all: server client
+COMMON_O=kv.pb.o log.o protocol.o rpc.o
 
-server: server.o protocol kv
-	$(CC) -o server server.o protocol.o kv.pb.o $(LIB)
+all: client server
 
-server.o: server.cpp protocol kv
+# binaries and main object files
+
+client: client.o common
+	$(CC) -o client client.o $(COMMON_O) $(LIB)
+
+client.o: client.cpp common
+	$(CC) -c client.cpp $(INC)
+
+server: server.o common
+	$(CC) -o server server.o $(COMMON_O) $(LIB)
+
+server.o: server.cpp common
 	$(CC) -c server.cpp $(INC)
 
-client: client.o protocol kv
-	$(CC) -o client client.o protocol.o kv.pb.o $(LIB)
+# libs
 
-client.o: client.cpp protocol kv
-	$(CC) -c client.cpp $(INC)
+common: kv log protocol rpc
+
+log: log.h log.cpp
+	$(CC) -c log.cpp $(INC)
 
 kv: kv.proto
 	$(PROTOC) --cpp_out=. kv.proto
 	$(CC) -c kv.pb.cc $(INC)
 
-#protocol: protocol.h protocol.cpp kv
 protocol: protocol.h protocol.cpp
 	$(CC) -c protocol.cpp $(INC)
+
+rpc: rpc.h rpc.cpp
+	$(CC) -c rpc.cpp $(INC)
