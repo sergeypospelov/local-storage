@@ -18,5 +18,6 @@
 See the code for more details
 
 ## TODO
+0. Implement a simple_client that would be used to send single requests, specified via cmdline parameters
 1. The hash table used in the server should be persistent (right now it's just an ordinary std::unordered_map)
 2. After making this hash table persistent, implement a persistent key-value storage based on this hash index
