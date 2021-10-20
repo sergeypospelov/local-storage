@@ -45,7 +45,7 @@ auto create_and_bind(std::string const& port)
     struct addrinfo* result;
     int sockt = getaddrinfo(nullptr, port.c_str(), &hints, &result);
     if (sockt != 0) {
-        log_error("getaddrinfo failed");
+        LOG_ERROR("getaddrinfo failed");
         return -1;
     }
 
@@ -66,7 +66,7 @@ auto create_and_bind(std::string const& port)
     }
 
     if (rp == nullptr) {
-        log_error("bind failed");
+        LOG_ERROR("bind failed");
         return -1;
     }
 
@@ -81,14 +81,14 @@ auto make_socket_nonblocking(int socketfd)
 {
     int flags = fcntl(socketfd, F_GETFL, 0);
     if (flags == -1) {
-        log_error("fcntl failed (F_GETFL)");
+        LOG_ERROR("fcntl failed (F_GETFL)");
         return false;
     }
 
     flags |= O_NONBLOCK;
     int s = fcntl(socketfd, F_SETFL, flags);
     if (s == -1) {
-        log_error("fcntl failed (F_SETFL)");
+        LOG_ERROR("fcntl failed (F_SETFL)");
         return false;
     }
 
@@ -109,7 +109,7 @@ SocketStatePtr accept_connection(
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             return nullptr;
         } else {
-            log_error("accept failed");
+            LOG_ERROR("accept failed");
             return nullptr;
         }
     }
@@ -123,21 +123,19 @@ SocketStatePtr accept_connection(
         NI_NUMERICHOST | NI_NUMERICSERV);
 
     if (ret == 0) {
-        std::stringstream log_message;
-        log_message << "accepted connection on fd " << infd
-            << "(host=" << hbuf << ", port=" << sbuf << ")";
-        log_info(log_message);
+        LOG_INFO_S("accepted connection on fd " << infd
+            << "(host=" << hbuf << ", port=" << sbuf << ")");
     }
 
     if (!make_socket_nonblocking(infd)) {
-        log_error("make_socket_nonblocking failed");
+        LOG_ERROR("make_socket_nonblocking failed");
         return nullptr;
     }
 
     event.data.fd = infd;
     event.events = EPOLLIN | EPOLLOUT | EPOLLET;
     if (epoll_ctl(epollfd, EPOLL_CTL_ADD, infd, &event) == -1) {
-        log_error("epoll_ctl failed");
+        LOG_ERROR("epoll_ctl failed");
         return nullptr;
     }
 
@@ -171,13 +169,13 @@ int main(int argc, const char** argv)
     }
 
     if (listen(socketfd, SOMAXCONN) == -1) {
-        log_error("listen failed");
+        LOG_ERROR("listen failed");
         return 1;
     }
 
     int epollfd = epoll_create1(0);
     if (epollfd == -1) {
-        log_error("epoll_create1 failed");
+        LOG_ERROR("epoll_create1 failed");
         return 1;
     }
 
@@ -185,7 +183,7 @@ int main(int argc, const char** argv)
     event.data.fd = socketfd;
     event.events = EPOLLIN | EPOLLET;
     if (epoll_ctl(epollfd, EPOLL_CTL_ADD, socketfd, &event) == -1) {
-        log_error("epoll_ctl failed");
+        LOG_ERROR("epoll_ctl failed");
         return 1;
     }
 
@@ -204,11 +202,7 @@ int main(int argc, const char** argv)
             abort();
         }
 
-        /*
-        std::stringstream log_message;
-        log_message << "get_request: " << get_request.DebugString();
-        log_info(log_message);
-        */
+        LOG_DEBUG_S("get_request: " << get_request.ShortDebugString());
 
         NProto::TGetResponse get_response;
         get_response.set_request_id(get_request.request_id());
@@ -232,11 +226,8 @@ int main(int argc, const char** argv)
             abort();
         }
 
-        /*
-        std::stringstream log_message;
-        log_message << "put_request: " << put_request.DebugString();
-        log_info(log_message);
-        */
+        LOG_DEBUG_S("put_request: " << put_request.ShortDebugString());
+
         storage[put_request.key()] = put_request.offset();
 
         NProto::TPutResponse put_response;
@@ -270,9 +261,7 @@ int main(int argc, const char** argv)
     std::unordered_map<int, SocketStatePtr> states;
 
     auto finalize = [&] (int fd) {
-        std::stringstream log_message;
-        log_message << "close " << fd;
-        log_info(log_message);
+        LOG_INFO_S("close " << fd);
 
         close(fd);
         states.erase(fd);
@@ -282,9 +271,7 @@ int main(int argc, const char** argv)
         const auto n = epoll_wait(epollfd, events.data(), ::max_events, -1);
 
         {
-            std::stringstream log_message;
-            log_message << "got " << n << " events";
-            log_info(log_message);
+            LOG_INFO_S("got " << n << " events");
         }
 
         for (int i = 0; i < n; ++i) {
@@ -294,9 +281,7 @@ int main(int argc, const char** argv)
                     || events[i].events & EPOLLHUP
                     || !(events[i].events & (EPOLLIN | EPOLLOUT)))
             {
-                std::stringstream log_message;
-                log_message << "epoll event error on fd " << fd;
-                log_error(log_message);
+                LOG_ERROR_S("epoll event error on fd " << fd);
 
                 finalize(fd);
 
@@ -332,7 +317,7 @@ int main(int argc, const char** argv)
         }
     }
 
-    log_info("exiting");
+    LOG_INFO("exiting");
 
     close(socketfd);
 

@@ -6,7 +6,6 @@
 #include <array>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <sstream>
 #include <string>
 
@@ -36,12 +35,30 @@ constexpr int timeout = 1000;
 ////////////////////////////////////////////////////////////////////////////////
 
 int main(int argc, const char** argv) {
+    /*
+     * simplistic arg parsing
+     * TODO proper argparse lib
+     */
+
     if (argc < 3) {
         return 1;
     }
 
     const auto port = atoi(argv[1]);
     const auto max_requests = atoi(argv[2]);
+    std::vector<std::string> stages;
+
+    for (int i = 3; i < argc; ++i) {
+        stages.push_back(argv[i]);
+    }
+
+    if (stages.empty()) {
+        stages = {"put", "get"};
+    }
+
+    /*
+     * socket initialization
+     */
 
     int socketfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
     if (socketfd == -1) {
@@ -50,7 +67,7 @@ int main(int argc, const char** argv) {
 
     int epollfd = epoll_create1(0);
     if (epollfd == -1) {
-        log_error("epoll_create1 failed");
+        LOG_ERROR("epoll_create1 failed");
         return 1;
     }
 
@@ -58,7 +75,7 @@ int main(int argc, const char** argv) {
     event.events = EPOLLIN | EPOLLOUT | EPOLLET;
     event.data.fd = socketfd;
     if (epoll_ctl(epollfd, EPOLL_CTL_ADD, socketfd, &event) == -1) {
-        log_error("epoll_ctl failed");
+        LOG_ERROR("epoll_ctl failed");
         return 1;
     }
 
@@ -86,39 +103,57 @@ int main(int argc, const char** argv) {
      * generating requests
      */
 
-    for (int i = 0; i < max_requests; ++i) {
-        std::stringstream key;
-        key << "key" << i;
+    auto generate_data = [] (int i) {
+        return i * 4;
+    };
 
-        NProto::TPutRequest put_request;
-        put_request.set_request_id(i);
-        put_request.set_key(key.str());
-        put_request.set_offset(i * 4);
+    uint64_t request_count = 0;
 
-        std::stringstream message;
-        serialize_header(PUT_REQUEST, put_request.ByteSizeLong(), message);
-        put_request.SerializeToOstream(&message);
+    auto stage_put = [&] () {
+        for (int i = 0; i < max_requests; ++i) {
+            std::stringstream key;
+            key << "key" << i;
 
-        state.output_queue.push_back(message.str());
+            NProto::TPutRequest put_request;
+            put_request.set_request_id(request_count++);
+            put_request.set_key(key.str());
+            put_request.set_offset(generate_data(i));
 
-        // std::cerr << "generated put request " << put_request.DebugString() << std::endl;
-    }
+            std::stringstream message;
+            serialize_header(PUT_REQUEST, put_request.ByteSizeLong(), message);
+            put_request.SerializeToOstream(&message);
 
-    for (int i = 0; i < max_requests; ++i) {
-        std::stringstream key;
-        key << "key" << i;
+            state.output_queue.push_back(message.str());
+        }
+    };
 
-        NProto::TGetRequest get_request;
-        get_request.set_request_id(max_requests + i);
-        get_request.set_key(key.str());
+    std::unordered_map<uint64_t, uint64_t> expected_gets;
 
-        std::stringstream message;
-        serialize_header(GET_REQUEST, get_request.ByteSizeLong(), message);
-        get_request.SerializeToOstream(&message);
+    auto stage_get = [&] () {
+        for (int i = 0; i < max_requests; ++i) {
+            std::stringstream key;
+            key << "key" << i;
 
-        state.output_queue.push_back(message.str());
+            NProto::TGetRequest get_request;
+            get_request.set_request_id(request_count++);
+            get_request.set_key(key.str());
+            expected_gets[get_request.request_id()] = generate_data(i);
 
-        // std::cerr << "generated get request " << get_request.DebugString() << std::endl;
+            std::stringstream message;
+            serialize_header(GET_REQUEST, get_request.ByteSizeLong(), message);
+            get_request.SerializeToOstream(&message);
+
+            state.output_queue.push_back(message.str());
+        }
+    };
+
+    std::unordered_map<std::string, std::function<void()>> stage2func = {
+        {"put", stage_put},
+        {"get", stage_get},
+    };
+
+    for (const auto& stage: stages) {
+        stage2func.at(stage)();
     }
 
     /*
@@ -135,9 +170,18 @@ int main(int argc, const char** argv) {
             abort();
         }
 
-        std::stringstream log_message;
-        log_message << "get_response: " << get_response.DebugString();
-        log_info(log_message);
+        LOG_DEBUG_S("get_response: " << get_response.ShortDebugString());
+
+        auto it = expected_gets.find(get_response.request_id());
+        if (it == expected_gets.end()) {
+            LOG_ERROR_S("unexpected get request_id "
+                << get_response.request_id());
+        } else if (it->second != get_response.offset()) {
+            LOG_ERROR_S("unexpected data for get request_id "
+                << get_response.request_id()
+                << ", actual " << get_response.offset()
+                << ", expected " << it->second);
+        }
 
         ++response_count;
 
@@ -152,10 +196,7 @@ int main(int argc, const char** argv) {
             abort();
         }
 
-        // TODO proper handling
-        std::stringstream log_message;
-        log_message << "put_response: " << put_response.DebugString();
-        log_info(log_message);
+        LOG_DEBUG_S("put_response: " << put_response.ShortDebugString());
 
         ++response_count;
 
@@ -183,34 +224,32 @@ int main(int argc, const char** argv) {
     int num_ready = epoll_wait(epollfd, events.data(), max_events, timeout);
     for (int i = 0; i < num_ready; i++) {
         if (events[i].events & EPOLLIN) {
-            verify(events[i].data.fd == socketfd, "fd mismatch");
+            VERIFY(events[i].data.fd == socketfd, "fd mismatch");
 
-            std::stringstream log_message;
-            log_message << "socket " << socketfd << " connected";
-            log_info(log_message);
+            LOG_INFO_S("socket " << socketfd << " connected");
         }
     }
 
     if (!process_output(state)) {
-        log_error("failed to send request");
+        LOG_ERROR("failed to send request");
         return 3;
     }
 
-    while (response_count < 2 * max_requests) {
+    while (response_count < request_count) {
         num_ready = epoll_wait(epollfd, events.data(), max_events, timeout);
         for (int i = 0; i < num_ready; i++) {
-            verify(events[i].data.fd == socketfd, "fd mismatch");
+            VERIFY(events[i].data.fd == socketfd, "fd mismatch");
 
             if (events[i].events & EPOLLIN) {
                 if (!process_input(state, handler)) {
-                    log_error("failed to read response");
+                    LOG_ERROR("failed to read response");
                     return 2;
                 }
             }
 
             if ((events[i].events & EPOLLOUT)) {
                 if (!process_output(state)) {
-                    log_error("failed to send request");
+                    LOG_ERROR("failed to send request");
                     return 3;
                 }
             }
