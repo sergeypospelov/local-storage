@@ -8,6 +8,7 @@
 * Each client uses a single tcp socket for communication with the server
 * All messages have the following form: message_type (1 byte) message_len (4 bytes) message_data (message_len bytes)
 * message_data is the serialized form for one of the messages described in `kv.proto`
+* Each request and each response message contains a request_id field used to match responses vs requests
 
 ## Run instructions
 * Start the server @ port 4242: `./server 4242`
