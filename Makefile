@@ -1,12 +1,12 @@
 #CC=g++ -g -O3 -DNDEBUG
-CC=g++ -g
+CC=g++ -std=c++17 -g
 PROTOC=$(PROTOBUF)/protoc
 
 PROTOBUF=./protobuf-3.18.1/src
 LIB=$(PROTOBUF)/.libs/libprotobuf.a -ldl -pthread
 INC=-I $(PROTOBUF)
 
-COMMON_O=kv.pb.o log.o protocol.o rpc.o
+COMMON_O=kv.pb.o log.o protocol.o rpc.o PersistentStorage.o
 
 all: client server
 
@@ -26,7 +26,7 @@ server.o: server.cpp common
 
 # libs
 
-common: kv log protocol rpc
+common: kv log protocol rpc PersistentStorage
 
 log: log.h log.cpp
 	$(CC) -c log.cpp $(INC)
@@ -40,3 +40,6 @@ protocol: protocol.h protocol.cpp
 
 rpc: rpc.h rpc.cpp
 	$(CC) -c rpc.cpp $(INC)
+
+PersistentStorage: PersistentStorage.hpp PersistentStorage.cpp
+	$(CC) -c PersistentStorage.cpp $(INC)
