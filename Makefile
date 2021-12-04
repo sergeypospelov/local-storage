@@ -8,9 +8,20 @@ INC=-I $(PROTOBUF)
 
 COMMON_O=kv.pb.o log.o protocol.o rpc.o PersistentStorage.o
 
-all: client server
+all: files client server
 
 # binaries and main object files
+
+files: data data/data data/log
+
+data:
+	mkdir data
+
+data/data:
+	touch data/data
+
+data/log:
+	touch data/log
 
 client: client.o common
 	$(CC) -o client client.o $(COMMON_O) $(LIB)
