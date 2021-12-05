@@ -1,7 +1,7 @@
-#include "kv.pb.h"
 #include "log.h"
 #include "protocol.h"
 #include "rpc.h"
+#include "kv.pb.h"
 
 #include <array>
 #include <cstdio>
@@ -18,6 +18,8 @@
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+
+#include "../include/PersistentStorage.h"
 
 static_assert(EAGAIN == EWOULDBLOCK);
 
@@ -143,6 +145,7 @@ SocketStatePtr accept_connection(int socketfd, struct epoll_event &event,
 
 int main(int argc, const char **argv) {
   if (argc < 2) {
+    std::cerr << "Expected port, but nothing was passed.\n";
     return 1;
   }
 
@@ -184,7 +187,8 @@ int main(int argc, const char **argv) {
    */
 
   // TODO on-disk storage
-  std::unordered_map<std::string, uint64_t> storage;
+  //std::unordered_map<std::string, uint64_t> storage;
+  PersistentStorage storage(Config("./data/data", "./data/log"));
 
   auto handle_get = [&](const std::string &request) {
     NProto::TGetRequest get_request;
@@ -198,9 +202,9 @@ int main(int argc, const char **argv) {
 
     NProto::TGetResponse get_response;
     get_response.set_request_id(get_request.request_id());
-    auto it = storage.find(get_request.key());
-    if (it != storage.end()) {
-      get_response.set_offset(it->second);
+    auto &key = get_request.key();
+    if (storage.find(key)) {
+      get_response.set_offset(storage.get(key));
     }
 
     std::stringstream response;
@@ -220,7 +224,7 @@ int main(int argc, const char **argv) {
 
     LOG_DEBUG_S("put_request: " << put_request.ShortDebugString());
 
-    storage[put_request.key()] = put_request.offset();
+    storage.put(put_request.key(), put_request.offset());
 
     NProto::TPutResponse put_response;
     put_response.set_request_id(put_request.request_id());

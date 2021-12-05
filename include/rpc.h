@@ -43,7 +43,7 @@ inline bool process_input(SocketState& state, const Handler& handler)
 
     char buf[512];
     while (true) {
-        auto len = std::min(sizeof(buf), state.current_message.to_read());
+        auto len = static_cast<ssize_t>(std::min(sizeof(buf), state.current_message.to_read()));
         auto count = recv(state.fd, buf, len, 0);
 
         if (count == -1) {
@@ -101,7 +101,7 @@ inline bool process_output(SocketState& state)
             state.output_queue.pop_front();
         }
 
-        auto len = buffer.size() - offset;
+        auto len = static_cast<ssize_t>(buffer.size() - offset);
 
         const auto count = send(
             state.fd,

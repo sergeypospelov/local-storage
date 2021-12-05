@@ -1,7 +1,7 @@
-#include "kv.pb.h"
 #include "log.h"
 #include "protocol.h"
 #include "rpc.h"
+#include "kv.pb.h"
 
 #include <array>
 #include <cstdlib>
@@ -160,7 +160,7 @@ int main(int argc, const char** argv) {
      * handler function
      */
 
-    int response_count = 0;
+    uint64_t response_count = 0;
 
     auto handle_get = [&] (const std::string& response) {
         NProto::TGetResponse get_response;
