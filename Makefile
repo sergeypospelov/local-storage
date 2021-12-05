@@ -1,56 +1,66 @@
 #CC=g++ -g -O3 -DNDEBUG
-CC=g++ -std=c++17 -g
-PROTOC=$(PROTOBUF)/protoc
+#CC=g++ -std=c++17 -g
+
+SRCDIR = src
+BINDIR = bin
+INCDIR = include
 
 PROTOBUF=./protobuf-3.18.1/src
-LIB=$(PROTOBUF)/.libs/libprotobuf.a -ldl -pthread
-INC=-I $(PROTOBUF)
+PROTOC=$(PROTOBUF)/protoc
 
-COMMON_O=kv.pb.o log.o protocol.o rpc.o PersistentStorage.o
+CXX = g++
+CXXFLAGS = -O2 -Wall -std=c++17 -Werror -I $(INCDIR) -I $(PROTOBUF)
+LDFLAGS = $(PROTOBUF)/.libs/libprotobuf.a -ldl -pthread
 
-all: files client server
+SERVER = server
+CLIENT = client
+
+all: data $(SERVER) $(CLIENT)
 
 # binaries and main object files
 
-files: data data/data data/log
-
 data:
 	mkdir data
-
-data/data:
 	touch data/data
-
-data/log:
 	touch data/log
 
-client: client.o common
-	$(CC) -o client client.o $(COMMON_O) $(LIB)
+kv: $(BINDIR) $(SRCDIR)/kv.pb.cc
 
-client.o: client.cpp common
-	$(CC) -c client.cpp $(INC)
+$(SRCDIR)/kv.pb.cc: kv.proto
+	$(PROTOC) --cpp_out=. ./kv.proto
+	mv kv.pb.h $(INCDIR)
+	mv kv.pb.cc $(SRCDIR)
 
-server: server.o common
-	$(CC) -o server server.o $(COMMON_O) $(LIB)
+MAINS = $(SERVER) $(CLIENT)
 
-server.o: server.cpp common
-	$(CC) -c server.cpp $(INC)
+SRCS = $(wildcard $(SRCDIR)/.cpp) $(wildcard $(SRCDIR)*.pb.cc)
+OBJS = $(subst .pb.cc,.pb.o,$(subst .cpp,.o,$(SRCS)))
 
-# libs
+OBJECTS = $(patsubst $(SRCDIR)/%.cpp,$(BINDIR)/%.o,$(wildcard $(SRCDIR)/*.cpp)) $(patsubst $(SRCDIR)/%.cc,$(BINDIR)/%.o,$(wildcard $(SRCDIR)/*.pb.cc))
+OBJECTS_WITHOUT_MAINS = $(filter-out $(MAINS:%=$(BINDIR)/%.o), $(OBJECTS))
 
-common: kv log protocol rpc PersistentStorage
+OBJECTS_SERVER = $(OBJECTS_WITHOUT_MAINS) $(BINDIR)/$(SERVER).o
+OBJECTS_CLIENT = $(OBJECTS_WITHOUT_MAINS) $(BINDIR)/$(CLIENT).o
 
-log: log.h log.cpp
-	$(CC) -c log.cpp $(INC)
+$(SERVER): $(BINDIR) $(OBJECTS_SERVER)
+	$(CXX) $(OBJECTS_SERVER) -o $(SERVER) $(LDFLAGS)
 
-kv: kv.proto
-	$(PROTOC) --cpp_out=. kv.proto
-	$(CC) -c kv.pb.cc $(INC)
+$(CLIENT): $(BINDIR) $(OBJECTS_CLIENT)
+	$(CXX) $(OBJECTS_CLIENT) -o $(CLIENT) $(LDFLAGS)
 
-protocol: protocol.h protocol.cpp
-	$(CC) -c protocol.cpp $(INC)
+$(BINDIR)/%.o: $(SRCDIR)/%.cpp
+	$(CXX) $(CXXFLAGS) -c -MMD -o $@ $<
 
-rpc: rpc.h rpc.cpp
-	$(CC) -c rpc.cpp $(INC)
+$(BINDIR)/%.pb.o: $(SRCDIR)/%.pb.cc
+	$(CXX) $(CXXFLAGS) -c -MMD -o $@ $<
 
-PersistentStorage: PersistentStorage.hpp PersistentStorage.cpp
-	$(CC) -c PersistentStorage.cpp $(INC)
+include $(wildcard $(BINDIR)/*.d)
+
+$(BINDIR):
+	mkdir -p $(BINDIR)
+
+clean:
+	rm -rf $(BINDIR) $(CLIENT) $(SERVER)
+	rm -rf data
+
+.PHONY: clean all

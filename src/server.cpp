@@ -1,7 +1,7 @@
-#include "kv.pb.h"
 #include "log.h"
 #include "protocol.h"
 #include "rpc.h"
+#include "kv.pb.h"
 
 #include <array>
 #include <cstdio>
@@ -19,7 +19,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-#include "PersistentStorage.hpp"
+#include "../include/PersistentStorage.h"
 
 static_assert(EAGAIN == EWOULDBLOCK);
 
