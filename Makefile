@@ -14,10 +14,11 @@ LDFLAGS = $(PROTOBUF)/.libs/libprotobuf.a -ldl -pthread
 
 SERVER = server
 CLIENT = client
+TEST = test
 
 all: data $(SERVER) $(CLIENT)
 
-# binaries and main object files
+test_task: $(TEST)
 
 data:
 	mkdir data
@@ -26,14 +27,16 @@ data:
 
 kv: $(BINDIR) $(SRCDIR)/kv.pb.cc
 
+# binaries and main object files
+
 $(SRCDIR)/kv.pb.cc: kv.proto
 	$(PROTOC) --cpp_out=. ./kv.proto
 	mv kv.pb.h $(INCDIR)
 	mv kv.pb.cc $(SRCDIR)
 
-MAINS = $(SERVER) $(CLIENT)
+MAINS = $(SERVER) $(CLIENT) $(TEST)
 
-SRCS = $(wildcard $(SRCDIR)/.cpp) $(wildcard $(SRCDIR)*.pb.cc)
+SRCS = $(wildcard $(SRCDIR)/.cpp) $(wildcard $(SRCDIR)/*.pb.cc)
 OBJS = $(subst .pb.cc,.pb.o,$(subst .cpp,.o,$(SRCS)))
 
 OBJECTS = $(patsubst $(SRCDIR)/%.cpp,$(BINDIR)/%.o,$(wildcard $(SRCDIR)/*.cpp)) $(patsubst $(SRCDIR)/%.cc,$(BINDIR)/%.o,$(wildcard $(SRCDIR)/*.pb.cc))
@@ -41,12 +44,17 @@ OBJECTS_WITHOUT_MAINS = $(filter-out $(MAINS:%=$(BINDIR)/%.o), $(OBJECTS))
 
 OBJECTS_SERVER = $(OBJECTS_WITHOUT_MAINS) $(BINDIR)/$(SERVER).o
 OBJECTS_CLIENT = $(OBJECTS_WITHOUT_MAINS) $(BINDIR)/$(CLIENT).o
+OBJECTS_TEST = $(OBJECTS_WITHOUT_MAINS) $(BINDIR)/$(TEST).o
+
 
 $(SERVER): $(BINDIR) $(OBJECTS_SERVER)
 	$(CXX) $(OBJECTS_SERVER) -o $(SERVER) $(LDFLAGS)
 
 $(CLIENT): $(BINDIR) $(OBJECTS_CLIENT)
 	$(CXX) $(OBJECTS_CLIENT) -o $(CLIENT) $(LDFLAGS)
+
+$(TEST): $(BINDIR) $(OBJECTS_TEST)
+	$(CXX) $(OBJECTS_TEST) -o $(TEST) $(LDFLAGS)
 
 $(BINDIR)/%.o: $(SRCDIR)/%.cpp
 	$(CXX) $(CXXFLAGS) -c -MMD -o $@ $<
@@ -60,7 +68,7 @@ $(BINDIR):
 	mkdir -p $(BINDIR)
 
 clean:
-	rm -rf $(BINDIR) $(CLIENT) $(SERVER)
+	rm -rf $(BINDIR) $(CLIENT) $(SERVER) $(TEST)
 	rm -rf data
 
 .PHONY: clean all

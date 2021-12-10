@@ -12,14 +12,7 @@
 #include <utility>
 #include <vector>
 
-struct Config {
-  const std::string data_file_name;
-  const std::string log_file_name;
-
-  Config(std::string storage_file_name, std::string log_file_name)
-      : data_file_name(std::move(storage_file_name)),
-        log_file_name(std::move(log_file_name)) {}
-};
+#include "Config.h"
 
 class PersistentStorage {
 public:

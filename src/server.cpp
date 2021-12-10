@@ -19,7 +19,9 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-#include "../include/PersistentStorage.h"
+#include "PersistentStorage.h"
+#include "Entry.h"
+#include "LsmStorage.h"
 
 static_assert(EAGAIN == EWOULDBLOCK);
 
@@ -188,7 +190,9 @@ int main(int argc, const char **argv) {
 
   // TODO on-disk storage
   //std::unordered_map<std::string, uint64_t> storage;
-  PersistentStorage storage(Config("./data/data", "./data/log"));
+  LsmStorage storage(
+      Config("./data/data", "./data/log.bin", "./data/sst", "./data/sst_idx"));
+  storage.start();
 
   auto handle_get = [&](const std::string &request) {
     NProto::TGetRequest get_request;
@@ -202,9 +206,10 @@ int main(int argc, const char **argv) {
 
     NProto::TGetResponse get_response;
     get_response.set_request_id(get_request.request_id());
-    auto &key = get_request.key();
-    if (storage.find(key)) {
-      get_response.set_offset(storage.get(key));
+    auto key = get_request.key();
+    std::string data;
+    if (storage.get(key, data)) {
+      get_response.set_offset(data);
     }
 
     std::stringstream response;
