@@ -105,8 +105,8 @@ int main(int argc, const char **argv) {
    */
 
   auto generate_data = [](int i) {
-    return std::to_string(std::hash<int>{}(i)) + std::string(i, '#') +
-           std::string(std::hash<int>{}(i + 10) % 20, '*');
+    return std::to_string(std::hash<int>{}(i)) + std::string(i % 5, '#') +
+           std::string(std::hash<int>{}(i + 10) % 13, '*');
   };
 
   uint64_t request_count = 0;

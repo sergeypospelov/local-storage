@@ -24,12 +24,11 @@ public:
                                    ForwardIterator last) {
     size_t id = tables.size();
 
-    std::string name = getTableName(config.sstable_prefix, id);
+    std::string filename_prefix = getTableName(config.sstable_prefix, id);
 
-    SSTable sst =
-        createSSTableFromEntries(first, last, name, config.sstable_skip_size);
+    createSSTableFromEntries(first, last, filename_prefix);
 
-    tables.emplace_back(sst);
+    tables.emplace_back(filename_prefix, config.sstable_skip_size);
   }
 
   bool get(Key key, std::string &data) {

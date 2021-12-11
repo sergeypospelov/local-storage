@@ -14,6 +14,7 @@ struct Config {
 
   const std::string data_file_name;
   const std::string log_file_name;
+  const std::string olg_log_file_name = "olg_log.bin";
 
   const std::string sstable_prefix;
 

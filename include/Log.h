@@ -45,12 +45,27 @@ public:
     is_running = false;
   }
 
+  void swap(Log &log) {
+    if (this == &log) {
+      return;
+    }
+    std::swap(log_filename, log.log_filename);
+    std::swap(out_log, log.out_log);
+    std::swap(is_running, log.is_running);
+  }
+
+  void clear() {
+    stop();
+    out_log.open(log_filename, std::ios::trunc);
+    stop();
+  }
+
   bool isRunning() const override { return is_running; }
 
   ~Log() override = default;
 
 private:
-  const std::string log_filename;
+  std::string log_filename;
 
   std::ofstream out_log;
 

@@ -117,9 +117,8 @@ private:
 };
 
 template <class ForwardIterator>
-SSTable createSSTableFromEntries(ForwardIterator first, ForwardIterator last,
-                                 const std::string &filename_prefix,
-                                 size_t skip_size) {
+void createSSTableFromEntries(ForwardIterator first, ForwardIterator last,
+                                 const std::string &filename_prefix) {
   std::ofstream out(prefixToFile(filename_prefix), std::ios::binary);
   std::ofstream out_idx(prefixToIndexFile(filename_prefix), std::ios::binary);
 
@@ -134,8 +133,6 @@ SSTable createSSTableFromEntries(ForwardIterator first, ForwardIterator last,
 
   out.close();
   out_idx.close();
-
-  return SSTable(filename_prefix, skip_size);
 }
 
 #endif // LOCAL_STORAGE_SRC_SSTABLE_H_
