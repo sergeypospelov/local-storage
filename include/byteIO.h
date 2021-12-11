@@ -27,12 +27,12 @@ template <typename T> struct byte_reader {
   T &operator=(const T &br) = delete;
 };
 
-std::ofstream &operator<<(std::ofstream &, const byte_writer<uint64_t> &);
-std::ofstream &operator<<(std::ofstream &, const byte_writer<std::string> &);
-std::ofstream &operator<<(std::ofstream &, const byte_writer<bool> &);
+std::ostream &operator<<(std::ostream &, const byte_writer<uint64_t> &);
+std::ostream &operator<<(std::ostream &, const byte_writer<std::string> &);
+std::ostream &operator<<(std::ostream &, const byte_writer<bool> &);
 
-std::ifstream &operator>>(std::ifstream &, const byte_reader<uint64_t> &);
-std::ifstream &operator>>(std::ifstream &, const byte_reader<std::string> &);
-std::ifstream &operator>>(std::ifstream &, const byte_reader<bool> &);
+std::istream &operator>>(std::istream &, const byte_reader<uint64_t> &);
+std::istream &operator>>(std::istream &, const byte_reader<std::string> &);
+std::istream &operator>>(std::istream &, const byte_reader<bool> &);
 
 #endif // LOCAL_STORAGE_SRC_BYTE_IO_H_

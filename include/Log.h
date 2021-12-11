@@ -17,15 +17,17 @@ class Log : public IRunnable {
 public:
   explicit Log(const std::string &log_filename) : log_filename(log_filename) {
   }
-  std::vector<std::pair<Key, std::string>> readAll() {
+  std::pair<std::vector<std::pair<Key, std::string>>, uint64_t> readAll() {
     std::ifstream in_log(log_filename, std::ios::binary);
 
     Entry entry;
     std::vector<std::pair<Key, std::string>> entries;
+    uint64_t size = 0;
     while (in_log >> entry) {
       entries.emplace_back(entry.key, entry.data);
+      size += entry.data.size();
     }
-    return entries;
+    return {entries, size};
   }
 
   void putToLog(uint64_t key, const std::string &value) {

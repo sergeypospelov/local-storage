@@ -17,8 +17,8 @@ struct Entry {
   bool operator<(const Entry &rhs) const;
   bool operator==(const Entry &rhs) const;
 
-  friend std::ofstream &operator<<(std::ofstream &os, const Entry &entry);
-  friend std::ifstream &operator>>(std::ifstream &os, Entry &entry);
+  friend std::ostream &operator<<(std::ostream &os, const Entry &entry);
+  friend std::istream &operator>>(std::istream &os, Entry &entry);
 };
 
 

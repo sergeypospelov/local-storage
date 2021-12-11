@@ -14,7 +14,7 @@ enum Cmd {
 };
 
 int main() {
-  Config config("data/data", "data/log.bin", "data/sst", "data/isst");
+  Config config("data", "data/data", "data/log.bin", "data/sst", 256, 10);
 
   LsmStorage storage(config);
   storage.start();

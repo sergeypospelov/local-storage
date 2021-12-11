@@ -1,7 +1,7 @@
+#include "kv.pb.h"
 #include "log.h"
 #include "protocol.h"
 #include "rpc.h"
-#include "kv.pb.h"
 
 #include <array>
 #include <cstdio>
@@ -19,9 +19,9 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-#include "PersistentStorage.h"
 #include "Entry.h"
 #include "LsmStorage.h"
+#include "PersistentStorage.h"
 
 static_assert(EAGAIN == EWOULDBLOCK);
 
@@ -189,9 +189,11 @@ int main(int argc, const char **argv) {
    */
 
   // TODO on-disk storage
-  //std::unordered_map<std::string, uint64_t> storage;
-  LsmStorage storage(
-      Config("./data/data", "./data/log.bin", "./data/sst", "./data/sst_idx"));
+  // std::unordered_map<std::string, uint64_t> storage;
+  Config config("./data", "./data/data", "./data/log.bin", "./data/sst",
+                1024 * 1024, 10);
+
+  LsmStorage storage(config);
   storage.start();
 
   auto handle_get = [&](const std::string &request) {

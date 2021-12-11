@@ -4,14 +4,14 @@
 
 static const int BYTE_SIZE = 8;
 
-std::ofstream &operator <<(std::ofstream &os, const byte_writer<uint64_t> &bw) {
+std::ostream &operator <<(std::ostream &os, const byte_writer<uint64_t> &bw) {
   for (size_t b = 0; b < sizeof(uint64_t); b++) {
     os.put((char)((bw._data >> (BYTE_SIZE * b)) & (0xff)));
   }
   return os;
 }
 
-std::ofstream &operator <<(std::ofstream &os, const byte_writer<std::string> &bw) {
+std::ostream &operator <<(std::ostream &os, const byte_writer<std::string> &bw) {
   for (char i : bw._data) {
     os.put(i);
   }
@@ -19,7 +19,7 @@ std::ofstream &operator <<(std::ofstream &os, const byte_writer<std::string> &bw
   return os;
 }
 
-std::ofstream &operator <<(std::ofstream &os, const byte_writer<bool> &bw) {
+std::ostream &operator <<(std::ostream &os, const byte_writer<bool> &bw) {
   for (size_t b = 0; b < sizeof(int); b += BYTE_SIZE) {
     os.put((char)(bw._data));
   }
@@ -29,7 +29,7 @@ std::ofstream &operator <<(std::ofstream &os, const byte_writer<bool> &bw) {
 
 /* READING */
 
-std::ifstream &operator >>(std::ifstream &is, const byte_reader<uint64_t> &br) {
+std::istream &operator >>(std::istream &is, const byte_reader<uint64_t> &br) {
   br._data = 0;
   for (size_t b = 0; b < sizeof(uint64_t); b++) {
     char c;
@@ -39,7 +39,7 @@ std::ifstream &operator >>(std::ifstream &is, const byte_reader<uint64_t> &br) {
   return is;
 }
 
-std::ifstream &operator >>(std::ifstream &is, const byte_reader<std::string> &br) {
+std::istream &operator >>(std::istream &is, const byte_reader<std::string> &br) {
   br._data = "";
   char c;
   while (is.get(c) && c != '\0') {
@@ -48,7 +48,7 @@ std::ifstream &operator >>(std::ifstream &is, const byte_reader<std::string> &br
   return is;
 }
 
-std::ifstream &operator >>(std::ifstream &is, const byte_reader<bool> &br) {
+std::istream &operator >>(std::istream &is, const byte_reader<bool> &br) {
   char c;
   is.get(c);
   br._data = c;

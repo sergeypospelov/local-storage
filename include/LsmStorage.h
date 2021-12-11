@@ -10,22 +10,37 @@
 #include "Entry.h"
 #include "IRunnable.h"
 #include "MemTable.h"
-#include "SSTable.h"
+#include "SSTableRegistry.h"
 
 class LsmStorage : public IRunnable {
 public:
   explicit LsmStorage(const Config &config)
-      : config(config), mem_table(config) {}
+      : config(config), registry(config), mem_table(config, registry) {}
 
   bool put(Key key, const std::string &value) {
     mem_table.put({key, value});
     return true;
   }
 
-  bool get(Key key, std::string &data) { return mem_table.get(key, data); }
+  bool get(Key key, std::string &data) {
+    if (mem_table.get(key, data)) {
+      return true;
+    }
+
+    if (registry.get(key, data)) {
+      return true;
+    }
+
+    return false;
+  }
 
   void start() override {
     mem_table.start();
+    registry.start();
+
+    std::cerr << "OK: sstables=" << registry.size() << "\n";
+
+
     is_running = true;
   }
 
@@ -36,10 +51,11 @@ public:
   ~LsmStorage() override = default;
 
 private:
-  const Config config;
+  const Config &config;
 
   bool is_running = false;
 
+  SSTableRegistry registry;
   MemTable mem_table;
 };
 

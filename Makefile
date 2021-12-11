@@ -9,7 +9,7 @@ PROTOBUF=./protobuf-3.18.1/src
 PROTOC=$(PROTOBUF)/protoc
 
 CXX = g++
-CXXFLAGS = -O2 -Wall -std=c++17 -Werror -I $(INCDIR) -I $(PROTOBUF)
+CXXFLAGS = -O2 -Wall -std=c++2a -Werror -I $(INCDIR) -I $(PROTOBUF)
 LDFLAGS = $(PROTOBUF)/.libs/libprotobuf.a -ldl -pthread
 
 SERVER = server
@@ -22,8 +22,6 @@ test_task: $(TEST)
 
 data:
 	mkdir data
-	touch data/data
-	touch data/log
 
 kv: $(BINDIR) $(SRCDIR)/kv.pb.cc
 
