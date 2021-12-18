@@ -190,8 +190,8 @@ int main(int argc, const char **argv) {
 
   // TODO on-disk storage
   // std::unordered_map<std::string, uint64_t> storage;
-  Config config("./data", "./data/data", "./data/log.bin", "./data/sst",
-                1024 * 1024, 10);
+  Config config("./data", "./data/data", "./data/log.bin", "sst",
+               1024 * 1024, 10);
 
   LsmStorage storage(config);
   storage.start();

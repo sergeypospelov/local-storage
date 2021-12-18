@@ -6,7 +6,7 @@
 #define LOCAL_STORAGE_INCLUDE_SSTABLEREGISTRY_H_
 
 #include <algorithm>
-#include <filesystem>
+#include <dirent.h>
 #include <fstream>
 #include <iterator>
 
@@ -24,7 +24,8 @@ public:
                                    ForwardIterator last) {
     size_t id = tables.size();
 
-    std::string filename_prefix = getTableName(config.sstable_prefix, id);
+    std::string filename_prefix =
+        config.data_folder + "/" + getTableName(config.sstable_prefix, id);
 
     createSSTableFromEntries(first, last, filename_prefix);
 
@@ -57,17 +58,28 @@ private:
     std::string folder = config.data_folder;
 
     std::vector<std::string> paths;
-    for (const auto &entry : std::filesystem::directory_iterator(folder)) {
-      if (entry.path().string().starts_with(config.sstable_prefix) &&
-          !entry.path().string().ends_with("idx.bin")) {
-        paths.emplace_back(entry.path().string());
+    DIR *dir;
+    struct dirent *diread;
+
+    if ((dir = opendir(folder.c_str())) != nullptr) {
+      while ((diread = readdir(dir)) != nullptr) {
+        if (std::string(diread->d_name).starts_with(config.sstable_prefix) &&
+            !std::string(diread->d_name).ends_with("idx.bin")) {
+          paths.emplace_back(folder + "/" + diread->d_name);
+        }
       }
+      closedir(dir);
+    } else {
+      perror("opendir");
+      exit(EXIT_FAILURE);
     }
+
     std::sort(paths.begin(), paths.end());
 
 
     for (const auto &path : paths) {
-      tables.emplace_back(path.substr(0, path.size() - 4), config.sstable_skip_size);
+      tables.emplace_back(path.substr(0, path.size() - 4),
+                          config.sstable_skip_size);
     }
   }
 
